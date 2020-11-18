@@ -23,7 +23,10 @@ namespace jw {
 	int numBlocks = ((width * height) + blockSize - 1) / blockSize;
 
 	int *set;
+	unsigned char *data;
+
 	cv::Mat m;
+
 
 	#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 	inline void gpuAssert(cudaError_t code, char *file, int line, bool abort = true)
@@ -35,7 +38,7 @@ namespace jw {
 		}
 	}
 
-	__global__ void CUDAMandelbrotTest(int *set, int maxIter, int width, int height, double reStart, double reEnd, double imStart, double imEnd) {
+	__global__ void CUDAMandelbrotTest(int *set, unsigned char *data, int maxIter, int width, int height, double reStart, double reEnd, double imStart, double imEnd) {
 		
 		int t = threadIdx.x;
 		int b = blockIdx.x;
@@ -66,6 +69,10 @@ namespace jw {
 			iter++;
 		}
 		set[index] = iter;
+
+		data[index * 3] = (int)(((double)iter / (double)maxIter) * 255); // hue
+		data[index * 3+1] = 180; // saturation
+		data[index * 3+2] = (iter < maxIter) ? 255 : 0; // value
 	}
 
 	void ZoomIn(int x, int y, int width, int height, double scale) {
@@ -87,33 +94,13 @@ namespace jw {
 		imEnd = iy + ihei / scale;
 	}
 
-	void IntArray2D2Mat(int *set, cv::Mat &m, int width, int height, int maxIter) {
-
-		for (int y = 0; y < height; y++) {
-			for (int x = 0; x < width; x++) {
-
-				int v = set[y*width + x];
-
-				int hue = (int)(((double)v / (double)maxIter) * 255);
-				int saturation = 180;
-				int value = (v < maxIter) ? 255 : 0;
-
-				m.at<cv::Vec3b>(y, x)[0] = hue;
-				m.at<cv::Vec3b>(y, x)[1] = saturation;
-				m.at<cv::Vec3b>(y, x)[2] = value;
-			}
-		}
-
-		cv::cvtColor(m, m, cv::COLOR_HSV2BGR);
-	}
-
 	void Draw() {
 
-		CUDAMandelbrotTest << <numBlocks, blockSize >> > (set, maxIter, width, height, reStart, reEnd, imStart, imEnd);
+		CUDAMandelbrotTest << <numBlocks, blockSize >> > (set, data, maxIter, width, height, reStart, reEnd, imStart, imEnd);
 
 		cudaDeviceSynchronize();
 
-		IntArray2D2Mat(set, m, width, height, maxIter);
+		cv::cvtColor(m, m, cv::COLOR_HSV2BGR);
 
 		cv::imshow("Mandelbrot", m);
 	}
@@ -158,8 +145,9 @@ namespace jw {
 		int N = width * height;
 
 		cudaMallocManaged(&set, N * sizeof(int*));
+		cudaMallocManaged(&data, 3 * N * sizeof(unsigned char*));
 
-		m = cv::Mat(height, width, CV_8UC3);
+		m = cv::Mat(height, width, CV_8UC3, data);
 
 		cv::namedWindow("Mandelbrot", 1);
 		cv::setMouseCallback("Mandelbrot", CallBackFunc, NULL);
